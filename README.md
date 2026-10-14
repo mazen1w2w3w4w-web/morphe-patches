@@ -35,7 +35,7 @@ All modifications made by Morphe, along with their dates, can be found in the Gi
 ## 🩹 Patches list
 
 <!-- PATCHES_START -->
-> **[v1.3.0](https://github.com/mazen1w2w3w4w-web/morphe-patches/releases/tag/v1.3.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;171 patches total
+> **[v1.4.0](https://github.com/mazen1w2w3w4w-web/morphe-patches/releases/tag/v1.4.0)**&nbsp;&nbsp;•&nbsp;&nbsp;`main`&nbsp;&nbsp;•&nbsp;&nbsp;171 patches total
 <details>
 <summary>📦 YouTube&nbsp;&nbsp;•&nbsp;&nbsp;98 patches</summary>
 <br>
@@ -103,7 +103,7 @@ All modifications made by Morphe, along with their dates, can be found in the Gi
 | [Hide status bar](#hide-status-bar) | Adds an option to hide the system status bar. Swipe down from the top edge to show it for a moment. |  |
 | [Hide timestamp](#hide-timestamp) | Adds an option to hide the timestamp in the bottom left of the video player. |  |
 | [Hide video action buttons](#hide-video-action-buttons) | Adds options to hide video action buttons in fullscreen and portrait modes. |  |
-| [Interactive subtitles](#interactive-subtitles) | Click on any English word in YouTube subtitles to show instant Arabic translation and common meanings via Gemini or Nvidia AI. |  |
+| [Interactive subtitles](#interactive-subtitles) | Click on any English word in YouTube subtitles to show instant Arabic translation and explanation via Gemini or Nvidia AI. |  |
 | [Loop video](#loop-video) | Adds an option to loop videos and display loop video button in the video player. |  |
 | [Media notification controls](#media-notification-controls) | Adds options to disable the seekbar and previous/next buttons in the media notification and headphone controls. |  |
 | [Miniplayer](#miniplayer) | Adds options to change the in-app minimized player. Patching 21.28.206 and lower has more miniplayer types to choose from. |  |
