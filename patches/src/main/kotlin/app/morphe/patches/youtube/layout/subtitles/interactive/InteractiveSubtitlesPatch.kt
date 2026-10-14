@@ -15,6 +15,16 @@ internal object MorpheUtilsSetContextFingerprint : Fingerprint(
     name = "setContext",
 )
 
+internal object TikTokAppOnCreateFingerprint : Fingerprint(
+    definingClass = "Lcom/google/android/apps/youtube/app/YouTubeTikTokRoot_Application;",
+    name = "onCreate",
+)
+
+internal object TikTokAppAttachFingerprint : Fingerprint(
+    definingClass = "Lcom/google/android/apps/youtube/app/YouTubeTikTokRoot_Application;",
+    name = "attachBaseContext",
+)
+
 internal object MainActivityInitFingerprint : Fingerprint(
     definingClass = "Lcom/google/android/apps/youtube/app/watchwhile/MainActivity;",
     name = "<init>",
@@ -30,29 +40,14 @@ internal object MainActivityOnResumeFingerprint : Fingerprint(
     name = "onResume",
 )
 
-internal object SettingsActivityInitFingerprint : Fingerprint(
-    definingClass = "Lcom/google/android/apps/youtube/app/settings/SettingsActivity;",
-    name = "<init>",
-)
-
 internal object SettingsActivityOnCreateFingerprint : Fingerprint(
     definingClass = "Lcom/google/android/apps/youtube/app/settings/SettingsActivity;",
     name = "onCreate",
 )
 
-internal object TikTokAppInitFingerprint : Fingerprint(
-    definingClass = "Lcom/google/android/apps/youtube/app/YouTubeTikTokRoot_Application;",
-    name = "<init>",
-)
-
-internal object ShellHomeInitFingerprint : Fingerprint(
-    definingClass = "Lcom/google/android/apps/youtube/app/application/Shell_HomeActivity;",
-    name = "<init>",
-)
-
-internal object SubtitleWindowInitFingerprint : Fingerprint(
+internal object SubtitleWindowOnLayoutFingerprint : Fingerprint(
     definingClass = "Lcom/google/android/libraries/youtube/player/subtitles/ui/SubtitleWindowView;",
-    name = "<init>",
+    name = "onLayout",
 )
 
 @Suppress("unused")
@@ -74,17 +69,16 @@ val interactiveSubtitlesPatch = bytecodePatch(
         MorpheUtilsGetContextFingerprint.methodOrNull?.addInstructions(0, initCall)
         MorpheUtilsSetContextFingerprint.methodOrNull?.addInstructions(0, initCall)
         MainActivityInitFingerprint.methodOrNull?.addInstructions(0, initCall)
-        SettingsActivityInitFingerprint.methodOrNull?.addInstructions(0, initCall)
-        TikTokAppInitFingerprint.methodOrNull?.addInstructions(0, initCall)
-        ShellHomeInitFingerprint.methodOrNull?.addInstructions(0, initCall)
-        SubtitleWindowInitFingerprint.methodOrNull?.addInstructions(0, initCall)
 
-        val actCall = """
-            invoke-static { p0 }, Lapp/morphe/extension/youtube/patches/subtitles/InteractiveSubtitleOverlay;->onActivityHook(Landroid/app/Activity;)V
+        val selfHookCall = """
+            invoke-static/range { p0 .. p0 }, Lapp/morphe/extension/youtube/patches/subtitles/InteractiveSubtitleOverlay;->onHook(Ljava/lang/Object;)V
         """
 
-        MainActivityOnCreateFingerprint.methodOrNull?.addInstructions(0, actCall)
-        MainActivityOnResumeFingerprint.methodOrNull?.addInstructions(0, actCall)
-        SettingsActivityOnCreateFingerprint.methodOrNull?.addInstructions(0, actCall)
+        TikTokAppOnCreateFingerprint.methodOrNull?.addInstructions(0, selfHookCall)
+        TikTokAppAttachFingerprint.methodOrNull?.addInstructions(0, selfHookCall)
+        MainActivityOnCreateFingerprint.methodOrNull?.addInstructions(0, selfHookCall)
+        MainActivityOnResumeFingerprint.methodOrNull?.addInstructions(0, selfHookCall)
+        SettingsActivityOnCreateFingerprint.methodOrNull?.addInstructions(0, selfHookCall)
+        SubtitleWindowOnLayoutFingerprint.methodOrNull?.addInstructions(0, selfHookCall)
     }
 }
