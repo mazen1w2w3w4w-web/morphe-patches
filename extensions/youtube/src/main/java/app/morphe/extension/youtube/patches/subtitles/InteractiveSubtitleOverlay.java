@@ -232,7 +232,7 @@ public class InteractiveSubtitleOverlay {
         btn.setOnClickListener(v -> showSettingsDialog(activity));
         contentGroup.addView(btn, lp);
         btn.bringToFront();
-    }
+                    }
     private static void updateSubtitlesFromHierarchy(Activity activity, ViewGroup contentGroup) {
         View subView = findSubtitleView(contentGroup);
         int bottomOffsetPx = calculatePlayerBottomOffset(activity, contentGroup, subView);
@@ -429,7 +429,7 @@ public class InteractiveSubtitleOverlay {
             contentGroup.addView(customSubBox, subLp);
         }
         cornerButton.bringToFront();
-    }
+            }
     private static void updatePositions(Context context, int playerBottomOffsetPx) {
         if (cornerButton != null && cornerButton.getLayoutParams() instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) cornerButton.getLayoutParams();
@@ -729,4 +729,4 @@ public class InteractiveSubtitleOverlay {
     private static int dpToPx(Context c, int dp) { return Math.round(dp * c.getResources().getDisplayMetrics().density); }
     private static String joinList(List<String> l, String d) { StringBuilder s = new StringBuilder(); for (int i = 0; i < l.size(); i++) { if (i > 0) s.append(d); s.append(l.get(i)); } return s.toString(); }
     private static String readStream(InputStream is) throws Exception { if (is == null) return ""; BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8)); StringBuilder s = new StringBuilder(); String l; while ((l = r.readLine()) != null) s.append(l).append("\n"); r.close(); return s.toString(); }
-                        }
+            }
