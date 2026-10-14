@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Application;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -43,7 +44,9 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -54,7 +57,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -84,13 +86,14 @@ public class InteractiveSubtitleOverlay {
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    private static WeakReference<Activity> currentActivityRef = new WeakReference<>(null);
+    private static WeakReference<View> directSubtitleViewRef = new WeakReference<>(null);
     private static TextView customSubBox;
     private static TextView cornerButton;
     private static Runnable hideButtonRunnable;
     private static String lastCapturedSentence = "";
     private static boolean loopStarted = false;
     private static boolean lifecycleRegistered = false;
-
     public static void init() {
         if (loopStarted) return;
         loopStarted = true;
@@ -98,64 +101,70 @@ public class InteractiveSubtitleOverlay {
             @Override
             public void run() {
                 try {
-                    tryRegisterLifecycle();
-                    scanRunningActivities();
+                    fetchFromMorpheUtils();
+                    Activity act = currentActivityRef.get();
+                    if (act != null && !act.isFinishing()) {
+                        handleActivity(act);
+                    }
                 } catch (Exception ignored) {}
-                mainHandler.postDelayed(this, 450);
+                mainHandler.postDelayed(this, 400);
             }
         });
     }
 
-    public static void onActivityHook(Activity activity) {
+    public static void onHook(Object self) {
         init();
-        if (activity != null) {
-            mainHandler.post(() -> handleActivity(activity));
-        }
+        if (self == null) return;
+        mainHandler.post(() -> {
+            try {
+                if (self instanceof Application) {
+                    registerLifecycle((Application) self);
+                } else if (self instanceof Activity) {
+                    Activity act = (Activity) self;
+                    currentActivityRef = new WeakReference<>(act);
+                    registerLifecycle(act.getApplication());
+                    handleActivity(act);
+                } else if (self instanceof View) {
+                    View v = (View) self;
+                    if (v.getClass().getName().contains("Subtitle")) {
+                        directSubtitleViewRef = new WeakReference<>(v);
+                    }
+                    Activity act = unwrapActivity(v.getContext());
+                    if (act != null) {
+                        currentActivityRef = new WeakReference<>(act);
+                        handleActivity(act);
+                    }
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
-    public static void onSubtitleViewLayout(View view) {
-        init();
-        if (view != null && view.getContext() instanceof Activity) {
-            mainHandler.post(() -> handleActivity((Activity) view.getContext()));
+    private static Activity unwrapActivity(Context ctx) {
+        while (ctx instanceof ContextWrapper) {
+            if (ctx instanceof Activity) return (Activity) ctx;
+            ctx = ((ContextWrapper) ctx).getBaseContext();
         }
-    }
-    private static void tryRegisterLifecycle() {
-        if (lifecycleRegistered) return;
-        try {
-            Class<?> atClass = Class.forName("android.app.ActivityThread");
-            Object appObj = atClass.getMethod("currentApplication").invoke(null);
-            if (appObj instanceof Application) {
-                lifecycleRegistered = true;
-                ((Application) appObj).registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-                    @Override public void onActivityResumed(Activity a) { handleActivity(a); }
-                    @Override public void onActivityCreated(Activity a, Bundle b) { handleActivity(a); }
-                    @Override public void onActivityStarted(Activity a) { handleActivity(a); }
-                    @Override public void onActivityPaused(Activity a) {}
-                    @Override public void onActivityStopped(Activity a) {}
-                    @Override public void onActivitySaveInstanceState(Activity a, Bundle b) {}
-                    @Override public void onActivityDestroyed(Activity a) {}
-                });
-            }
-        } catch (Exception ignored) {}
+        return null;
     }
 
-    private static void scanRunningActivities() {
+    private static void fetchFromMorpheUtils() {
         try {
-            Class<?> atClass = Class.forName("android.app.ActivityThread");
-            Object at = atClass.getMethod("currentActivityThread").invoke(null);
-            Field f = atClass.getDeclaredField("mActivities");
-            f.setAccessible(true);
-            Object mapObj = f.get(at);
-            if (mapObj instanceof Map) {
-                for (Object record : ((Map<?, ?>) mapObj).values()) {
-                    Field pausedField = record.getClass().getDeclaredField("paused");
-                    pausedField.setAccessible(true);
-                    if (!pausedField.getBoolean(record)) {
-                        Field actField = record.getClass().getDeclaredField("activity");
-                        actField.setAccessible(true);
-                        Object act = actField.get(record);
-                        if (act instanceof Activity) {
-                            handleActivity((Activity) act);
+            Class<?> utilsCls = Class.forName("app.morphe.extension.shared.Utils");
+            for (Method m : utilsCls.getDeclaredMethods()) {
+                if (m.getParameterTypes().length == 0) {
+                    m.setAccessible(true);
+                    if (Activity.class.isAssignableFrom(m.getReturnType())) {
+                        Object act = m.invoke(null);
+                        if (act instanceof Activity && !((Activity) act).isFinishing()) {
+                            currentActivityRef = new WeakReference<>((Activity) act);
+                        }
+                    } else if (Context.class.isAssignableFrom(m.getReturnType())) {
+                        Object ctx = m.invoke(null);
+                        if (ctx instanceof Context) {
+                            Context appCtx = ((Context) ctx).getApplicationContext();
+                            if (appCtx instanceof Application) registerLifecycle((Application) appCtx);
+                            Activity unwrapped = unwrapActivity((Context) ctx);
+                            if (unwrapped != null) currentActivityRef = new WeakReference<>(unwrapped);
                         }
                     }
                 }
@@ -163,6 +172,19 @@ public class InteractiveSubtitleOverlay {
         } catch (Exception ignored) {}
     }
 
+    private static void registerLifecycle(Application app) {
+        if (lifecycleRegistered || app == null) return;
+        lifecycleRegistered = true;
+        app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+            @Override public void onActivityResumed(Activity a) { currentActivityRef = new WeakReference<>(a); handleActivity(a); }
+            @Override public void onActivityStarted(Activity a) { currentActivityRef = new WeakReference<>(a); handleActivity(a); }
+            @Override public void onActivityCreated(Activity a, Bundle b) { currentActivityRef = new WeakReference<>(a); handleActivity(a); }
+            @Override public void onActivityPaused(Activity a) {}
+            @Override public void onActivityStopped(Activity a) {}
+            @Override public void onActivitySaveInstanceState(Activity a, Bundle b) {}
+            @Override public void onActivityDestroyed(Activity a) {}
+        });
+    }
     private static void handleActivity(Activity activity) {
         if (activity == null || activity.isFinishing() || activity.getWindow() == null) return;
         installTouchInterceptor(activity.getWindow());
@@ -190,8 +212,7 @@ public class InteractiveSubtitleOverlay {
                     new Class<?>[]{Window.Callback.class},
                     (p, method, args) -> {
                         if ("dispatchTouchEvent".equals(method.getName()) && args != null && args.length > 0 && args[0] instanceof MotionEvent) {
-                            MotionEvent ev = (MotionEvent) args[0];
-                            if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+                            if (((MotionEvent) args[0]).getAction() == MotionEvent.ACTION_DOWN) {
                                 onPlayerControlsVisibilityChanged(true);
                             }
                         }
@@ -232,9 +253,13 @@ public class InteractiveSubtitleOverlay {
         btn.setOnClickListener(v -> showSettingsDialog(activity));
         contentGroup.addView(btn, lp);
         btn.bringToFront();
-                    }
+    }
+
     private static void updateSubtitlesFromHierarchy(Activity activity, ViewGroup contentGroup) {
-        View subView = findSubtitleView(contentGroup);
+        View subView = directSubtitleViewRef.get();
+        if (subView == null || !subView.isShown()) {
+            subView = findSubtitleView(contentGroup);
+        }
         int bottomOffsetPx = calculatePlayerBottomOffset(activity, contentGroup, subView);
         updatePositions(activity, bottomOffsetPx);
 
@@ -256,7 +281,7 @@ public class InteractiveSubtitleOverlay {
                 populateClickableWords(customSubBox, sentence);
             }
         } else if (lastCapturedSentence.isEmpty() && customSubBox != null) {
-            String starter = "Tap CC in player for live subtitles or click any word here to test AI";
+            String starter = "Tap any English word here to test AI translation or enable CC";
             lastCapturedSentence = starter;
             applySubtitleBoxStyle(activity, customSubBox, bottomOffsetPx);
             customSubBox.setVisibility(View.VISIBLE);
@@ -264,22 +289,23 @@ public class InteractiveSubtitleOverlay {
             populateClickableWords(customSubBox, starter);
         }
     }
-
     private static int calculatePlayerBottomOffset(Activity activity, ViewGroup contentGroup, View playerNode) {
         int w = contentGroup.getWidth();
         int h = contentGroup.getHeight();
-        if (w > h) return 0; // وضع ملء الشاشة الأفقي
+        if (w > h) return 0;
 
-        if (playerNode != null && playerNode.getHeight() > dpToPx(activity, 80)) {
+        if (playerNode != null && playerNode.getHeight() > dpToPx(activity, 40)) {
             int[] loc = new int[2];
             int[] cLoc = new int[2];
             playerNode.getLocationInWindow(loc);
             contentGroup.getLocationInWindow(cLoc);
             int pBottom = loc[1] + playerNode.getHeight();
             int cBottom = cLoc[1] + h;
-            if (cBottom > pBottom) return cBottom - pBottom;
+            if (cBottom > pBottom && (cBottom - pBottom) < h - dpToPx(activity, 100)) {
+                return cBottom - pBottom;
+            }
         }
-        int estimatedPlayerHeight = Math.round(w * 9f / 16f) + dpToPx(activity, 48);
+        int estimatedPlayerHeight = Math.round(w * 9f / 16f) + dpToPx(activity, 52);
         return Math.max(0, h - estimatedPlayerHeight);
     }
 
@@ -334,6 +360,7 @@ public class InteractiveSubtitleOverlay {
         }
         return null;
     }
+
     private static CharSequence extractViaFields(Object obj) {
         if (obj == null) return null;
         Class<?> cls = obj.getClass();
@@ -371,8 +398,7 @@ public class InteractiveSubtitleOverlay {
         if (cs == null) return false;
         String s = cs.toString().trim();
         return s.length() > 1 && !s.startsWith("com.google.") && !s.startsWith("android.");
-    }
-
+                                              }
     private static void ensurePlayerWidgetsAttached(Activity activity, ViewGroup contentGroup) {
         View existingBtn = contentGroup.findViewWithTag(CornerButtonTag);
         if (existingBtn instanceof TextView) {
@@ -380,14 +406,14 @@ public class InteractiveSubtitleOverlay {
         } else {
             cornerButton = new TextView(activity);
             cornerButton.setTag(CornerButtonTag);
-            cornerButton.setText("AI Sub");
+            cornerButton.setText("⚙️ AI Sub");
             cornerButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             cornerButton.setTypeface(Typeface.DEFAULT_BOLD);
             cornerButton.setGravity(Gravity.CENTER);
             int pH = dpToPx(activity, 12);
             int pV = dpToPx(activity, 6);
             cornerButton.setPadding(pH, pV, pH, pV);
-            cornerButton.setElevation(dpToPx(activity, 95));
+            cornerButton.setElevation(dpToPx(activity, 100));
             updateCornerButtonAppearance(activity);
 
             FrameLayout.LayoutParams btnLp = new FrameLayout.LayoutParams(
@@ -398,12 +424,12 @@ public class InteractiveSubtitleOverlay {
             contentGroup.addView(cornerButton, btnLp);
 
             cornerButton.setOnClickListener(v -> {
+                onPlayerControlsVisibilityChanged(true);
                 boolean next = !isFeatureEnabled(activity);
                 prefs(activity).edit().putBoolean(KEY_ENABLED, next).apply();
                 updateCornerButtonAppearance(activity);
                 if (!next && customSubBox != null) customSubBox.setVisibility(View.GONE);
-                Toast.makeText(activity, next ? "✅ تم تفعيل ترجمة الذكاء الاصطناعي" : "⛔ تم إيقاف الترجمة", Toast.LENGTH_SHORT).show();
-                scheduleButtonAutoHide();
+                Toast.makeText(activity, next ? "✅ تم تفعيل الترجمة (اضغط مطولاً للإعدادات)" : "⛔ تم إيقاف الترجمة (اضغط مطولاً للإعدادات)", Toast.LENGTH_SHORT).show();
             });
 
             cornerButton.setOnLongClickListener(v -> {
@@ -420,7 +446,7 @@ public class InteractiveSubtitleOverlay {
             customSubBox = new TextView(activity);
             customSubBox.setTag(OverlayTag);
             customSubBox.setGravity(Gravity.CENTER);
-            customSubBox.setElevation(dpToPx(activity, 90));
+            customSubBox.setElevation(dpToPx(activity, 95));
             FrameLayout.LayoutParams subLp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -428,15 +454,17 @@ public class InteractiveSubtitleOverlay {
             );
             contentGroup.addView(customSubBox, subLp);
         }
+        cornerButton.setVisibility(View.VISIBLE);
         cornerButton.bringToFront();
-            }
+    }
+
     private static void updatePositions(Context context, int playerBottomOffsetPx) {
         if (cornerButton != null && cornerButton.getLayoutParams() instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) cornerButton.getLayoutParams();
-            int targetBottom = playerBottomOffsetPx + dpToPx(context, 14);
+            int targetBottom = playerBottomOffsetPx + dpToPx(context, 12);
             if (Math.abs(lp.bottomMargin - targetBottom) > 6) {
                 lp.bottomMargin = targetBottom;
-                lp.rightMargin = dpToPx(context, 16);
+                lp.rightMargin = dpToPx(context, 14);
                 cornerButton.setLayoutParams(lp);
             }
         }
@@ -448,20 +476,18 @@ public class InteractiveSubtitleOverlay {
     public static void onPlayerControlsVisibilityChanged(boolean visible) {
         mainHandler.post(() -> {
             if (cornerButton == null) return;
+            cornerButton.setVisibility(View.VISIBLE);
             cornerButton.bringToFront();
-            if (visible) {
-                cornerButton.setVisibility(View.VISIBLE);
-                cornerButton.animate().alpha(1.0f).setDuration(180).start();
-                scheduleButtonAutoHide();
-            }
+            cornerButton.animate().alpha(1.0f).setDuration(150).start();
+            scheduleButtonAutoHide();
         });
     }
 
     private static void scheduleButtonAutoHide() {
         if (hideButtonRunnable != null) mainHandler.removeCallbacks(hideButtonRunnable);
         hideButtonRunnable = () -> {
-            if (cornerButton != null && cornerButton.getVisibility() == View.VISIBLE) {
-                cornerButton.animate().alpha(0.25f).setDuration(300).start();
+            if (cornerButton != null) {
+                cornerButton.animate().alpha(0.45f).setDuration(300).start();
             }
         };
         mainHandler.postDelayed(hideButtonRunnable, 4000);
@@ -473,23 +499,22 @@ public class InteractiveSubtitleOverlay {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dpToPx(context, 18));
         if (enabled) {
-            bg.setColor(Color.argb(225, 18, 95, 52));
+            bg.setColor(Color.argb(230, 18, 95, 52));
             bg.setStroke(dpToPx(context, 1), Color.rgb(46, 204, 113));
             cornerButton.setTextColor(Color.WHITE);
         } else {
-            bg.setColor(Color.argb(200, 40, 40, 40));
+            bg.setColor(Color.argb(210, 45, 45, 45));
             bg.setStroke(dpToPx(context, 1), Color.GRAY);
             cornerButton.setTextColor(Color.LTGRAY);
         }
         cornerButton.setBackground(bg);
     }
-
     private static void applySubtitleBoxStyle(Context context, TextView box, int playerBottomOffsetPx) {
         SharedPreferences sp = prefs(context);
         int fontSize = sp.getInt(KEY_FONT_SIZE, 17);
         int bgMode = sp.getInt(KEY_BG_MODE, 0);
         int bgAlpha = sp.getInt(KEY_SUB_ALPHA, 185);
-        int userMarginDp = sp.getInt(KEY_BOTTOM_MARGIN, 44);
+        int userMarginDp = sp.getInt(KEY_BOTTOM_MARGIN, 46);
 
         box.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
         box.setShadowLayer(5f, 0f, 2f, Color.BLACK);
@@ -499,20 +524,16 @@ public class InteractiveSubtitleOverlay {
 
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dpToPx(context, 10));
-        if (bgMode == 2) {
-            bg.setColor(Color.TRANSPARENT);
-        } else if (bgMode == 1) {
-            bg.setColor(Color.argb(255, 0, 0, 0));
-        } else {
-            bg.setColor(Color.argb(bgAlpha, 12, 12, 12));
-        }
+        if (bgMode == 2) bg.setColor(Color.TRANSPARENT);
+        else if (bgMode == 1) bg.setColor(Color.argb(255, 0, 0, 0));
+        else bg.setColor(Color.argb(bgAlpha, 12, 12, 12));
         box.setBackground(bg);
 
         if (box.getLayoutParams() instanceof FrameLayout.LayoutParams) {
             FrameLayout.LayoutParams mlp = (FrameLayout.LayoutParams) box.getLayoutParams();
             mlp.bottomMargin = playerBottomOffsetPx + dpToPx(context, userMarginDp);
-            mlp.leftMargin = dpToPx(context, 20);
-            mlp.rightMargin = dpToPx(context, 75);
+            mlp.leftMargin = dpToPx(context, 16);
+            mlp.rightMargin = dpToPx(context, 85);
             box.setLayoutParams(mlp);
         }
     }
@@ -526,16 +547,8 @@ public class InteractiveSubtitleOverlay {
             if (!word.isEmpty() && Character.isLetterOrDigit(word.charAt(0))) {
                 final String clickedWord = word;
                 spannable.setSpan(new ClickableSpan() {
-                    @Override
-                    public void onClick(View widget) {
-                        showAiTranslationPopup(widget, clickedWord, sentence);
-                    }
-                    @Override
-                    public void updateDrawState(TextPaint ds) {
-                        super.updateDrawState(ds);
-                        ds.setColor(Color.WHITE);
-                        ds.setUnderlineText(false);
-                    }
+                    @Override public void onClick(View widget) { showAiTranslationPopup(widget, clickedWord, sentence); }
+                    @Override public void updateDrawState(TextPaint ds) { super.updateDrawState(ds); ds.setColor(Color.WHITE); ds.setUnderlineText(false); }
                 }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
         }
@@ -543,6 +556,7 @@ public class InteractiveSubtitleOverlay {
         textView.setMovementMethod(LinkMovementMethod.getInstance());
         textView.setHighlightColor(Color.argb(130, 46, 204, 113));
     }
+
     private static void showAiTranslationPopup(View anchor, String word, String fullSentence) {
         Context context = anchor.getContext();
         SharedPreferences sp = prefs(context);
@@ -558,10 +572,11 @@ public class InteractiveSubtitleOverlay {
         box.setBackground(bg);
 
         TextView title = new TextView(context);
-        title.setText("🇬🇧 " + word);
+        title.setText("🇬🇧 " + word + "   (اضغط ⚙️ للإعدادات)");
         title.setTextColor(Color.rgb(46, 204, 113));
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setOnClickListener(v -> showSettingsDialog(context));
         box.addView(title);
 
         TextView body = new TextView(context);
@@ -599,11 +614,9 @@ public class InteractiveSubtitleOverlay {
             if (isNvidia) c.setRequestProperty("Authorization", "Bearer " + key);
             c.setConnectTimeout(8000);
             c.setDoOutput(true);
-
             JSONObject payload = isNvidia
                     ? new JSONObject().put("model", model.contains("/") ? model : "meta/llama-3.3-70b-instruct").put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("content", prompt))).put("max_tokens", 350)
                     : new JSONObject().put("contents", new JSONArray().put(new JSONObject().put("parts", new JSONArray().put(new JSONObject().put("text", prompt)))));
-
             try (OutputStream os = c.getOutputStream()) { os.write(payload.toString().getBytes(StandardCharsets.UTF_8)); }
             int code = c.getResponseCode();
             String resp = readStream(code == 200 ? c.getInputStream() : c.getErrorStream());
@@ -685,7 +698,7 @@ public class InteractiveSubtitleOverlay {
         bgSp.setSelection(sp.getInt(KEY_BG_MODE, 0));
         lay.addView(bgSp);
 
-        int[] fs = {sp.getInt(KEY_FONT_SIZE, 17)}, sa = {sp.getInt(KEY_SUB_ALPHA, 185)}, bm = {sp.getInt(KEY_BOTTOM_MARGIN, 44)};
+        int[] fs = {sp.getInt(KEY_FONT_SIZE, 17)}, sa = {sp.getInt(KEY_SUB_ALPHA, 185)}, bm = {sp.getInt(KEY_BOTTOM_MARGIN, 46)};
         addSeek(ctx, lay, "حجم الخط (تكبير/تصغير)", 12, 34, fs[0], v -> fs[0] = v);
         addSeek(ctx, lay, "درجة الشفافية", 0, 255, sa[0], v -> sa[0] = v);
         addSeek(ctx, lay, "ارتفاع الترجمة", 10, 160, bm[0], v -> bm[0] = v);
@@ -729,4 +742,4 @@ public class InteractiveSubtitleOverlay {
     private static int dpToPx(Context c, int dp) { return Math.round(dp * c.getResources().getDisplayMetrics().density); }
     private static String joinList(List<String> l, String d) { StringBuilder s = new StringBuilder(); for (int i = 0; i < l.size(); i++) { if (i > 0) s.append(d); s.append(l.get(i)); } return s.toString(); }
     private static String readStream(InputStream is) throws Exception { if (is == null) return ""; BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8)); StringBuilder s = new StringBuilder(); String l; while ((l = r.readLine()) != null) s.append(l).append("\n"); r.close(); return s.toString(); }
-            }
+    }
